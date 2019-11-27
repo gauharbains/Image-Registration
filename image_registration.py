@@ -12,7 +12,7 @@ from PIL import Image
 from bfio import bfio 
 import bioformats     
 import javabridge 
-
+from utils import _parse_regex, _parse_files_xy
 import argparse
 
 Image.MAX_IMAGE_PIXELS = 1500000000 
@@ -92,9 +92,7 @@ def stack_eight_tiles(tile1,tile2,tile3,tile4,tile5,tile6,tile7,tile8):
     stacked_image=np.vstack((upper_half,lower_half))
     return stacked_image   
 
-def apply_rough_homography(image,homography_smallscale,reference_image,scale_factor):
-    scale_matrix = np.array([[1,1,scale_factor],[1,1,scale_factor],[1/scale_factor,1/scale_factor,1]])
-    homography_largescale= scale_matrix *homography_smallscale    
+def apply_rough_homography(image,homography_largescale,reference_image):       
     homography_inverse=np.linalg.inv(homography_largescale)
     transformed_image=np.zeros_like(reference_image)
     height_1,width_1=reference_image.shape
@@ -125,13 +123,30 @@ def upscale_homography_matrices(Homography1,Homography2,Homography3,Homography4,
     Homography3=scale_matrix *Homography3 
     Homography4=scale_matrix *Homography4 
     return Homography1,Homography2,Homography3,Homography4
+
+def apply_registration(moving_image,Template_image,Rough_Homography_Upscaled, homography1_upscale,homography2_upscale,homography3_upscale,homography4_upscale):
+    height,width=Template_image.shape
+    rough_transformed_image=apply_rough_homography(moving_image,Rough_Homography_Upscaled,Template_image)
+    moving_image_tile1,moving_image_tile2,moving_image_tile3,moving_image_tile4=get_four_tiles_with_buffer_16bit(rough_transformed_image)
+    del rough_transformed_image
+    moving_image_transformed_tile1=cv2.warpPerspective(moving_image_tile1,homography1_upscale,(int(width/2),int(height/2)))
+    moving_image_transformed_tile2=cv2.warpPerspective(moving_image_tile2,homography2_upscale,(int(width/2),int(height/2)))
+    moving_image_transformed_tile3=cv2.warpPerspective(moving_image_tile3,homography3_upscale,(int(width/2),int(height/2)))
+    moving_image_transformed_tile4=cv2.warpPerspective(moving_image_tile4,homography4_upscale,(int(width/2),int(height/2)))    
+    transformed_moving_image=stack_tiles(moving_image_transformed_tile1,moving_image_transformed_tile2,moving_image_transformed_tile3,moving_image_transformed_tile4)
+    return transformed_moving_image   
+    
     
 def register_images(reference_image, moving_image):
     height,width=reference_image.shape
-    reference_image_downscaled= get_scaled_down_images(reference_image,16)
-    moving_image_downscaled= get_scaled_down_images(moving_image,16)
+    scale_factor=16
+    scale_matrix = np.array([[1,1,scale_factor],[1,1,scale_factor],[1/scale_factor,1/scale_factor,1]])
+    reference_image_downscaled= get_scaled_down_images(reference_image,scale_factor)
+    moving_image_downscaled= get_scaled_down_images(moving_image,scale_factor)
     _,Rough_Homography_Downscaled = image_transformation(moving_image_downscaled,reference_image_downscaled)
-    moving_image_transformed=apply_rough_homography(moving_image,Rough_Homography_Downscaled,reference_image,16)
+    
+    Rough_Homography_Upscaled=Rough_Homography_Downscaled*scale_matrix
+    moving_image_transformed=apply_rough_homography(moving_image,Rough_Homography_Upscaled,reference_image)
     del moving_image
     del reference_image     
     
@@ -151,40 +166,112 @@ def register_images(reference_image, moving_image):
     moving_image_transformed_tile3=cv2.warpPerspective(moving_image_tile3,homography3_upscale,(int(width/2),int(height/2)))
     moving_image_transformed_tile4=cv2.warpPerspective(moving_image_tile4,homography4_upscale,(int(width/2),int(height/2)))    
     transformed_moving_image=stack_tiles(moving_image_transformed_tile1,moving_image_transformed_tile2,moving_image_transformed_tile3,moving_image_transformed_tile4)
-    return transformed_moving_image
+    return transformed_moving_image, Rough_Homography_Upscaled, homography1_upscale,homography2_upscale,homography3_upscale,homography4_upscale
 ##################################################################################################################################################################
-
 javabridge.start_vm(class_path=bioformats.JARS)
-parser=argparse.ArgumentParser()
-parser.add_argument('--templateDir',dest='Template_Image_Path',type=str,required=True)
-parser.add_argument('--movingDir',dest='Moving_Image_Path',type=str,required=True)
-args = parser.parse_args()
 
 
-template_image_path = args.Template_Image_Path
-print(template_image_path)
-bf = bfio.BioReader(template_image_path)
+filename_format='S1_R{x}_C1-C11_Y000_X000_C{yyy}.ome.tif'
+regex=_parse_regex(filename_format)
+fpath="./"
+variables='xy'
+file_ind=_parse_files_xy(fpath,regex[0],variables)
+
+Template_image_path=file_ind[0][0][1][0][0][0]
+bf = bfio.BioReader(Template_image_path)
 template_image = bf.read_image()
 template_image=template_image[:,:,0,0,0]
 
 
-moving_image_path = args.Moving_Image_Path
-print(moving_image_path)
-bf = bfio.BioReader(moving_image_path)
-moving_image = bf.read_image()
-moving_image_metadata=bf.read_metadata()
-moving_image=moving_image[:,:,0,0,0]
-
-transformed_moving_image=register_images(template_image, moving_image)
-transformed_moving_image_5channel=np.zeros((transformed_moving_image.shape[0],transformed_moving_image.shape[1],1,1,1),dtype='uint16') 
-transformed_moving_image_5channel[:,:,0,0,0]=transformed_moving_image
-print(moving_image_metadata)
-output_image_name=".ome.tif"
-bw = bfio.BioWriter(output_image_name,image=transformed_moving_image_5channel)
-
-bw.write_image(transformed_moving_image_5channel)
-bw.close_image()
+for r in file_ind[0][0].keys(): 
+    if r==1 :
+        continue
+    moving_image_path=file_ind[0][0][r][1][0][0]
+    
+    bf = bfio.BioReader(moving_image_path)
+    moving_image = bf.read_image()
+    moving_image_metadata=bf.read_metadata()
+    moving_image=moving_image[:,:,0,0,0]
+    transformed_moving_image, Rough_Homography_Upscaled, homography1_upscale,homography2_upscale,homography3_upscale,homography4_upscale=register_images(template_image, moving_image)
+    transformed_moving_image_5channel=np.zeros((transformed_moving_image.shape[0],transformed_moving_image.shape[1],1,1,1),dtype='uint16') 
+    transformed_moving_image_5channel[:,:,0,0,0]=transformed_moving_image
+    print(moving_image_metadata)
+    output_image_name="registered"+moving_image_path
+    bw = bfio.BioWriter(output_image_name,image=transformed_moving_image_5channel)
+    bw.write_image(transformed_moving_image_5channel)
+    bw.close_image()        
+    
+    for c in file_ind[0][0][r].keys():
+        if c==1:
+            continue
+        moving_image_path=file_ind[0][0][r][c][0][0]
+        bf = bfio.BioReader(moving_image_path)
+        moving_image = bf.read_image()
+        moving_image_metadata=bf.read_metadata()
+        moving_image=moving_image[:,:,0,0,0]
+        transformed_moving_image=apply_registration(moving_image,template_image,Rough_Homography_Upscaled, homography1_upscale,homography2_upscale,homography3_upscale,homography4_upscale)
+        transformed_moving_image_5channel=np.zeros((transformed_moving_image.shape[0],transformed_moving_image.shape[1],1,1,1),dtype='uint16') 
+        transformed_moving_image_5channel[:,:,0,0,0]=transformed_moving_image
+        print(moving_image_metadata)
+        output_image_name="registered"+moving_image_path
+        bw = bfio.BioWriter(output_image_name,image=transformed_moving_image_5channel)
+        bw.write_image(transformed_moving_image_5channel)
+        bw.close_image()
+    
+    break
+        
+        
+        
 javabridge.kill_vm()
+        
+        
+        
+        
+
+
+
+
+'''file_ind dictionary indexing sequence -----file_ind[t][c][x][y][z]   '''
+
+
+
+
+
+
+
+
+#
+#
+#
+#
+##parser=argparse.ArgumentParser()
+##parser.add_argument('--templateDir',dest='Template_Image_Path',type=str,required=True)
+##parser.add_argument('--movingDir',dest='Moving_Image_Path',type=str,required=True)
+##args = parser.parse_args()
+#
+#
+##template_image_path = args.Template_Image_Path
+#template_image_path =""
+#
+#bf = bfio.BioReader(template_image_path)
+#template_image = bf.read_image()
+#template_image=template_image[:,:,0,0,0]
+#
+#
+##moving_image_path = args.Moving_Image_Path
+#moving_image_path=""
+
+#
+#transformed_moving_image=register_images(template_image, moving_image)
+#transformed_moving_image_5channel=np.zeros((transformed_moving_image.shape[0],transformed_moving_image.shape[1],1,1,1),dtype='uint16') 
+#transformed_moving_image_5channel[:,:,0,0,0]=transformed_moving_image
+#print(moving_image_metadata)
+#output_image_name=".ome.tif"
+#bw = bfio.BioWriter(output_image_name,image=transformed_moving_image_5channel)
+#
+#bw.write_image(transformed_moving_image_5channel)
+#bw.close_image()
+#javabridge.kill_vm()
 
 ################################################################################################################################################################
 
