@@ -225,12 +225,8 @@ for r in file_ind[0][0].keys():
 javabridge.kill_vm()
         
         
-        
-        
-
-
-
-
+     
+ 
 '''file_ind dictionary indexing sequence -----file_ind[t][c][x][y][z]   '''
 
 
@@ -240,40 +236,6 @@ javabridge.kill_vm()
 
 
 
-#
-#
-#
-#
-##parser=argparse.ArgumentParser()
-##parser.add_argument('--templateDir',dest='Template_Image_Path',type=str,required=True)
-##parser.add_argument('--movingDir',dest='Moving_Image_Path',type=str,required=True)
-##args = parser.parse_args()
-#
-#
-##template_image_path = args.Template_Image_Path
-#template_image_path =""
-#
-#bf = bfio.BioReader(template_image_path)
-#template_image = bf.read_image()
-#template_image=template_image[:,:,0,0,0]
-#
-#
-##moving_image_path = args.Moving_Image_Path
-#moving_image_path=""
-
-#
-#transformed_moving_image=register_images(template_image, moving_image)
-#transformed_moving_image_5channel=np.zeros((transformed_moving_image.shape[0],transformed_moving_image.shape[1],1,1,1),dtype='uint16') 
-#transformed_moving_image_5channel[:,:,0,0,0]=transformed_moving_image
-#print(moving_image_metadata)
-#output_image_name=".ome.tif"
-#bw = bfio.BioWriter(output_image_name,image=transformed_moving_image_5channel)
-#
-#bw.write_image(transformed_moving_image_5channel)
-#bw.close_image()
-#javabridge.kill_vm()
-
-################################################################################################################################################################
 
 
 
